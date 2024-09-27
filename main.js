@@ -30,7 +30,7 @@ const controls = new OrbitControls(camera, canvas)
 const minPan = new THREE.Vector3( -1, -1, -1 )
 const maxPan = new THREE.Vector3( 1, 1, 1 )
 const clock = new THREE.Clock(), clockFF = new THREE.Clock()
-let animations, animation01, animation02, animation03, mixer01, mixer02, mixer03, stake, isPlaying01 = false, isPlaying02 = false
+let animations, animation01, animation02, animation03, mixer01, mixer02, mixer03, stake, isPlaying01 = false, isPlaying02 = false, candleISO
 
 const getRenderer = () => {
     renderer.setSize(sizes.width, sizes.height)
@@ -153,6 +153,11 @@ const candleMaterial = new THREE.MeshPhongMaterial({
     emissiveIntensity: 1
 })
 
+const candleISOMaterial = new THREE.MeshPhongMaterial({
+    emissive: 0xe63946,
+    emissiveIntensity: 1
+})
+
 const fireMaterial = new THREE.MeshPhongMaterial({
     emissive: 0xe36414,
     emissiveIntensity: 1
@@ -166,7 +171,10 @@ const concreteMaterial = new THREE.MeshStandardMaterial({
 
 const loader = new THREE.TextureLoader()
 const heart = loader.load('heart.png')
-const heartMaterial = new THREE.MeshBasicMaterial({ map: heart, transparent: true })
+const heartMaterial = new THREE.MeshStandardMaterial({ map: heart, transparent: true })
+
+const noise = loader.load('noise.jpg')
+const noiseMaterial = new THREE.MeshStandardMaterial({ map: noise, transparent: true })
 
 
 
@@ -194,7 +202,8 @@ const getModel = () => {
         'room.glb',
         (gltf) => {
             gltf.scene.traverse( child => {
-               child.material = concreteMaterial
+            //    child.material = concreteMaterial
+               child.material = noiseMaterial
             })
             scene.add(gltf.scene) 
             scene.add(camera)
@@ -205,7 +214,6 @@ const getModel = () => {
         'items.glb',
         (gltf) => {
             scene.add(gltf.scene) 
-            scene.add(camera)
         }
     )
 
@@ -297,6 +305,17 @@ const getModel = () => {
         }
     )
 
+    gltfLoader.load(
+        'candleISO.glb',
+        (gltf) => {
+            gltf.scene.traverse( child => child.material = candleISOMaterial)
+            candleISO = gltf.scene
+            scene.add(gltf.scene) 
+            gltf.scene.position.y = -1000
+        
+        }
+    )
+
 
 
     gltfLoader.load(
@@ -336,14 +355,6 @@ const getModel = () => {
     )
     gltfLoader.load(
         'screen06.glb',
-        (gltf) => {
-            gltf.scene.traverse( child => child.material = videoMaterial)
-            scene.add(gltf.scene) 
-        }
-    )
-
-    gltfLoader.load(
-        'test.glb',
         (gltf) => {
             gltf.scene.traverse( child => child.material = videoMaterial)
             scene.add(gltf.scene) 
@@ -434,6 +445,11 @@ const onMouseDown = (event) => {
                 stake.visible = false
             }
         }
+
+
+        if(selectedObject.name == 'CandleBase056') {
+            scene.remove( selectedObject.parent )
+        }
         console.log(`${selectedObject.name} was clicked!`)
     }
 }
@@ -466,6 +482,42 @@ window.addEventListener('resize', () => {
 })
 
 document.addEventListener('mousedown', onMouseDown)
+
+
+
+const mouse = new THREE.Vector2()
+const intersectionPoint = new THREE.Vector3()
+const planeNormal = new THREE.Vector3()
+const plane = new THREE.Plane()
+
+
+window.addEventListener('mousemove', (e) => {
+    sizes.width = window.innerWidth
+    sizes.height = window.innerHeight
+    
+    mouse.x = (e.clientX / sizes.width) * 2 - 1
+    mouse.y = -(e.clientY / sizes.height) * 2 + 1
+
+    planeNormal.copy(camera.position).normalize()
+    plane.setFromNormalAndCoplanarPoint(planeNormal, scene.position)
+
+    raycaster.setFromCamera(mouse, camera)
+    raycaster.ray.intersectPlane(plane, intersectionPoint)
+})
+
+
+window.addEventListener('dblclick', () => {
+    const sphereGEO = candleISO.clone()
+    scene.add(sphereGEO)
+    const {x, y , z} = intersectionPoint
+    sphereGEO.position.copy( new THREE.Vector3 (x, .5, z))
+
+    //remove the candle after 2 seconds
+    // setTimeout(()=>{
+    //     sphereGEO.visible = false
+    // }, 2000)
+})
+
 
 getModel()
 getRenderer()
