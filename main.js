@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { OutlineEffect } from "three/addons/effects/OutlineEffect.js";
+import TWEEN from "@tweenjs/tween.js";
 
 const canvas = document.querySelector(".webgl");
 const scene = new THREE.Scene();
@@ -499,16 +500,34 @@ const onMouseDown = (event) => {
       }
     }
 
-    if (selectedObject.name == "Cylinder003") {
-      animation02.repetitions = 1;
+    if (selectedObject.name === "StakeBAse") {
+      console.log("StakeBAse was clicked!");
 
-      if (!isPlaying02) {
-        mixer02.timeScale = 1;
-        animation02.reset().play();
-        isPlaying02 = true;
-        animation02.clampWhenFinished = true;
+      // Traverse the stake object to find the actual stake mesh
+      let actualStakeMesh;
+      stake.traverse((child) => {
+        if (child.isMesh) {
+          actualStakeMesh = child; // Assuming the stake is a mesh
+          console.log("Actual Stake Mesh found:", actualStakeMesh);
+        }
+      });
 
-        stake.visible = false;
+      if (actualStakeMesh) {
+        console.log("Starting manual movement for the stake...");
+
+        // Perform a simple manual movement along the y-axis to test
+        actualStakeMesh.position.y += 1; // Move the stake up by 1 unit
+        console.log("New stake position:", actualStakeMesh.position);
+
+        // Simple linear tween test
+        const moveUp = new TWEEN.Tween(actualStakeMesh.position)
+          .to({ y: actualStakeMesh.position.y + 1 }, 2000) // Move up by 1 unit over 2 seconds
+          .onUpdate(() => {
+            console.log("Stake position moving up:", actualStakeMesh.position);
+          })
+          .start();
+      } else {
+        console.error("Actual Stake Mesh not found.");
       }
     }
 
@@ -521,11 +540,11 @@ const onMouseDown = (event) => {
 
 const animate = () => {
   requestAnimationFrame(animate);
+
   const elapsedTime = clockFF.getElapsedTime();
   let delta = clock.getDelta();
   controls.update();
   firefliesMaterial.uniforms.uTime.value = elapsedTime;
-  // controls.target.clamp( minPan, maxPan )
 
   renderer.render(scene, camera);
   effect.render(scene, camera);
@@ -534,6 +553,9 @@ const animate = () => {
   if (mixer02) mixer02.update(delta);
   if (mixer03) mixer03.update(delta);
   if (vampireMixer) vampireMixer.update(delta);
+
+  // Ensure this line is included to update the tweens
+  TWEEN.update();
 };
 
 window.addEventListener("resize", () => {
