@@ -230,34 +230,116 @@ const getModel = () => {
     scene.add(gltf.scene);
   });
   gltfLoader.load(
-    "vampire.glb", // Path to your vampire model
+    "vampire.glb",
     (gltf) => {
-      const vampire = gltf.scene; // Reference to the loaded vampire model
-      vampireAnimations = gltf.animations; // Store the animations
+      const vampire = gltf.scene;
+      vampireAnimations = gltf.animations;
 
-      // Scale, position, and rotate adjustments
-      vampire.scale.set(1.1, 1.1, 1.1); // Adjust the scale as needed
-      vampire.position.set(0.2, -6.0, -11.1); // Adjust the position for visibility
-      vampire.rotation.set(0, Math.PI, 0); // Adjust rotation
+      vampire.scale.set(1.1, 1.1, 1.1);
+      vampire.position.set(0.2, -6.0, -11.1);
+      vampire.rotation.set(0, Math.PI, 0);
 
-      // Initialize the AnimationMixer for the vampire
       vampireMixer = new THREE.AnimationMixer(vampire);
 
-      // Find and play the desired animation (e.g., 'idle')
-      const idleAction = vampireMixer.clipAction(
-        vampireAnimations.find((anim) => anim.name === "idle")
+      // Helper function to remove the first keyframe from each track
+      const removeFirstKeyframe = (clip) => {
+        clip.tracks.forEach((track) => {
+          track.times = track.times.slice(1);
+          track.values = track.values.slice(track.getValueSize());
+        });
+        clip.resetDuration();
+      };
+
+      const idleClip = vampireAnimations.find((anim) => anim.name === "idle");
+      const walkClip = vampireAnimations.find((anim) => anim.name === "Walk");
+      const attackClip = vampireAnimations.find(
+        (anim) => anim.name === "attack"
       );
+
+      if (!idleClip || !walkClip || !attackClip) {
+        console.error("Error: Missing one or more animations.");
+        return;
+      }
+
+      // Remove the first keyframe from each clip
+      removeFirstKeyframe(idleClip);
+      removeFirstKeyframe(walkClip);
+      removeFirstKeyframe(attackClip);
+
+      const idleAction = vampireMixer.clipAction(idleClip);
+      const walkAction = vampireMixer.clipAction(walkClip);
+      const attackAction = vampireMixer.clipAction(attackClip);
+
+      attackAction.setLoop(THREE.LoopOnce);
+      attackAction.clampWhenFinished = true;
+
+      // Play the base idle animation first
       idleAction.play();
+
+      // Function to smoothly switch animations
+      const switchAnimation = (fromClip, toClip) => {
+        fromClip.fadeOut(1); // Fade out the current clip
+        toClip.reset().fadeIn(1).play(); // Fade in the new clip
+      };
+
+      // Move vampire forward and slightly down during Walk animation
+      const moveVampireForwardAndDown = () => {
+        const moveSpeed = 0.02; // Adjust for forward movement speed
+        const downSpeed = 0.003; // Adjust for downward movement speed
+        const intervalId = setInterval(() => {
+          vampire.position.z += moveSpeed; // Move forward
+          vampire.position.y -= downSpeed; // Move slightly down
+
+          // Stop the movement when the vampire has moved a certain distance
+          if (vampire.position.z >= -8.2) {
+            clearInterval(intervalId); // Stop moving forward
+            switchAnimation(walkAction, attackAction); // Start the attack animation
+          }
+        }, 16); // Runs approximately every frame (60fps)
+      };
+
+      // Event listener to trigger animation on coffin click
+      const onCoffinClick = (event) => {
+        const coords = new THREE.Vector2(
+          (event.clientX / renderer.domElement.clientWidth) * 2 - 1,
+          -((event.clientY / renderer.domElement.clientHeight) * 2 - 1)
+        );
+
+        raycaster.setFromCamera(coords, camera);
+        const intersections = raycaster.intersectObjects(scene.children, true);
+
+        if (intersections.length > 0) {
+          const selectedObject = intersections[0].object;
+
+          // Check if the clicked object is the coffin
+          if (
+            selectedObject.name === "Plane001" ||
+            selectedObject.parent.name === "Coffin"
+          ) {
+            console.log("Coffin clicked! Starting vampire animation...");
+
+            // Keep the vampire in idle for 3 more seconds before starting to walk
+            setTimeout(() => {
+              switchAnimation(idleAction, walkAction);
+
+              // Start moving the vampire forward and down during the Walk animation
+              moveVampireForwardAndDown();
+            }, 5000); // Wait for 3 seconds before switching to Walk
+          }
+        }
+      };
+
+      // Add event listener to trigger animation on click
+      document.addEventListener("mousedown", onCoffinClick);
 
       // Add vampire to the scene
       scene.add(vampire);
     },
     undefined,
     (error) => {
-      console.error("An error occurred while loading vampire:", error);
+      console.error("An error occurred while loading the vampire:", error);
     }
   );
-
   gltfLoader.load("chest.glb", (gltf) => {
     animations = gltf.animations;
     mixer02 = new THREE.AnimationMixer(gltf.scene);
