@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { OutlineEffect } from "three/addons/effects/OutlineEffect.js";
-import TWEEN from "@tweenjs/tween.js";
+import { gsap } from "gsap";
 
 const canvas = document.querySelector(".webgl");
 const scene = new THREE.Scene();
@@ -503,6 +503,15 @@ const onMouseDown = (event) => {
     if (selectedObject.name === "StakeBAse") {
       console.log("StakeBAse was clicked!");
 
+      // Ensure the chest opens first
+      if (!isPlaying02) {
+        animation02.repetitions = 1; // Chest will open once
+        mixer02.timeScale = 1; // Normal playback
+        animation02.reset().play(); // Play the chest opening animation
+        animation02.clampWhenFinished = true; // Keep the chest open
+        isPlaying02 = true; // Prevent the chest from re-opening
+      }
+
       // Traverse the stake object to find the actual stake mesh
       let actualStakeMesh;
       stake.traverse((child) => {
@@ -513,19 +522,39 @@ const onMouseDown = (event) => {
       });
 
       if (actualStakeMesh) {
-        console.log("Starting manual movement for the stake...");
+        // Initial rise above the chest
+        const riseHeight = actualStakeMesh.position.y + 2.5; // Height above the chest
+        const hoverHeight = 0.1; // Gentle hover range (up and down movement)
+        const hoverDuration = 2; // Duration of the hover in seconds
 
-        // Perform a simple manual movement along the y-axis to test
-        actualStakeMesh.position.y += 1; // Move the stake up by 1 unit
-        console.log("New stake position:", actualStakeMesh.position);
+        // Glow Effect: Adding emissive glow to the material
+        actualStakeMesh.material.emissive = new THREE.Color(0xfdd017); // Red glow
+        actualStakeMesh.material.emissiveIntensity = 1.5; // Increase the glow intensity
 
-        // Simple linear tween test
-        const moveUp = new TWEEN.Tween(actualStakeMesh.position)
-          .to({ y: actualStakeMesh.position.y + 1 }, 2000) // Move up by 1 unit over 2 seconds
-          .onUpdate(() => {
-            console.log("Stake position moving up:", actualStakeMesh.position);
-          })
-          .start();
+        // Animate the stake rise up
+        gsap.to(actualStakeMesh.position, {
+          y: riseHeight,
+          duration: 2,
+          ease: "power3.out",
+          onComplete: () => {
+            // After rising, gently hover up and down
+            gsap.to(actualStakeMesh.position, {
+              y: riseHeight + hoverHeight,
+              duration: hoverDuration,
+              repeat: -1, // Infinite repeat
+              yoyo: true, // Back and forth
+              ease: "none", // Smooth up and down
+            });
+
+            // Rapidly spin the stake around its local Y-axis (vertical axis)
+            gsap.to(actualStakeMesh.rotation, {
+              rotation: 360, // 2π radians (360 degrees) for full rotation
+              duration: 0.5, // Faster spin duration (0.5 seconds per full rotation)
+              repeat: -1, // Infinite repeat
+              ease: "none", // No easing for constant rapid spin
+            });
+          },
+        });
       } else {
         console.error("Actual Stake Mesh not found.");
       }
@@ -538,6 +567,7 @@ const onMouseDown = (event) => {
   }
 };
 
+// The animate function
 const animate = () => {
   requestAnimationFrame(animate);
 
@@ -553,11 +583,9 @@ const animate = () => {
   if (mixer02) mixer02.update(delta);
   if (mixer03) mixer03.update(delta);
   if (vampireMixer) vampireMixer.update(delta);
-
-  // Ensure this line is included to update the tweens
-  TWEEN.update();
 };
 
+// Resize listener
 window.addEventListener("resize", () => {
   sizes.width = window.innerWidth;
   sizes.height = window.innerHeight;
@@ -569,6 +597,7 @@ window.addEventListener("resize", () => {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 });
 
+// Mouse down listener for clicking objects
 document.addEventListener("mousedown", onMouseDown);
 
 const mouse = new THREE.Vector2();
