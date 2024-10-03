@@ -4,6 +4,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { OutlineEffect } from "three/addons/effects/OutlineEffect.js";
 import { gsap } from "gsap";
+import { DragControls } from "three/examples/jsm/controls/DragControls.js";
 
 const canvas = document.querySelector(".webgl");
 const scene = new THREE.Scene();
@@ -32,12 +33,13 @@ const effect = new OutlineEffect(renderer, {
   defaultVisible: true,
 });
 
+const fixedYPosition = 0;
 const controls = new OrbitControls(camera, canvas);
 const minPan = new THREE.Vector3(-1, -1, -1);
 const maxPan = new THREE.Vector3(1, 1, 1);
 const clock = new THREE.Clock(),
   clockFF = new THREE.Clock();
-let vampireMixer, vampireAnimations; // Already declared globally
+let vampireMixer, vampireAnimations;
 let animations,
   animation01,
   animation02,
@@ -48,7 +50,17 @@ let animations,
   stake,
   isPlaying01 = false,
   isPlaying02 = false,
-  candleISO;
+  candleISO,
+  coffinMarker = null,
+  isCoffinClickable = false,
+  isDragging = false,
+  isStakeRisen = false,
+  stakeMesh = null,
+  isStakeHovered = false,
+  isCoffinMarkerVisible = false,
+  dragControls = null,
+  vampire2,
+  chestMarker = null;
 
 const getCamera = () => {
   camera.position.x = 80;
@@ -230,6 +242,24 @@ const getModel = () => {
     animation01 = mixer01.clipAction(animations[0]);
     scene.add(gltf.scene);
   });
+
+  // Load vampire2 separately outside the vampire loader
+  gltfLoader.load("vampire2.glb", (gltf) => {
+    vampire2 = gltf.scene;
+
+    vampire2.scale.set(100, 100, 100); // Final size
+    vampire2.position.set(4, -26.3, 2); // Coffin position
+    vampire2.rotation.set(0, Math.PI, 0); // Adjust rotation to match
+    vampire2.visible = false; // Initially hidden
+
+    scene.add(vampire2); // Add vampire2 to the scene
+  });
+
+  // Then in the Yes button handler
+  const handleYesButton = () => {
+    vampire.visible = false; // Hide the original vampire
+    vampire2.visible = true; // Show the hurt vampire
+  };
   gltfLoader.load(
     "vampire.glb",
     (gltf) => {
@@ -271,7 +301,7 @@ const getModel = () => {
       const walkAction = vampireMixer.clipAction(walkClip);
       const attackAction = vampireMixer.clipAction(attackClip);
 
-      attackAction.setLoop(THREE.LoopOnce);
+      attackAction.setLoop(THREE.LoopRepeat, 2);
       attackAction.clampWhenFinished = true;
 
       // Play the base idle animation first
@@ -279,6 +309,7 @@ const getModel = () => {
 
       // Function to smoothly switch animations
       const switchAnimation = (fromClip, toClip) => {
+        console.log("Switching animation:", { fromClip, toClip });
         fromClip.fadeOut(1); // Fade out the current clip
         toClip.reset().fadeIn(1).play(); // Fade in the new clip
       };
@@ -299,8 +330,55 @@ const getModel = () => {
         }, 16); // Runs approximately every frame (60fps)
       };
 
+      // Function to handle No button click
+      const handleNoButton = () => {
+        console.log("No button was clicked"); // Ensure this gets logged
+
+        // Remove the popup
+        const popupBox = document.getElementById("popupBox");
+        if (popupBox) {
+          popupBox.remove();
+        }
+
+        // Switch animation and move the vampire after a delay
+        setTimeout(() => {
+          console.log("Switching vampire animation"); // Log the animation switch
+          switchAnimation(idleAction, walkAction);
+          moveVampireForwardAndDown();
+        }, 1000); // Adjust the delay for testing
+      };
+
+      // Event listener for when the animation finishes
+      vampireMixer.addEventListener("finished", () => {
+        console.log("Vampire attack complete");
+        fadeToRedAndShowDeathMessage(); // Show the death message and red overlay
+      });
+
+      // Function to fade the screen to red and show the death message
+      const fadeToRedAndShowDeathMessage = () => {
+        const deathOverlay = document.getElementById("deathOverlay");
+        const deathTextBox = document.getElementById("deathTextBox");
+
+        // Show the red overlay with a fade-in effect
+        deathOverlay.style.display = "block";
+        gsap.to(deathOverlay, {
+          opacity: 1,
+          duration: 2, // 2-second fade-in
+          onComplete: () => {
+            // After the fade-in, show the death message
+            deathTextBox.style.display = "block";
+            gsap.to(deathTextBox, { opacity: 1, duration: 1 }); // Fade in the text box
+          },
+        });
+      };
+
       // Event listener to trigger animation on coffin click
       const onCoffinClick = (event) => {
+        if (!isCoffinClickable) {
+          console.log("Coffin is not clickable yet!");
+          return; // Exit if the coffin is not clickable yet
+        }
+
         const coords = new THREE.Vector2(
           (event.clientX / renderer.domElement.clientWidth) * 2 - 1,
           -((event.clientY / renderer.domElement.clientHeight) * 2 - 1)
@@ -312,29 +390,116 @@ const getModel = () => {
         if (intersections.length > 0) {
           const selectedObject = intersections[0].object;
 
-          // Check if the clicked object is the coffin
           if (
             selectedObject.name === "Plane001" ||
-            selectedObject.parent.name === "Coffin"
+            selectedObject.name === "Plane001_1"
           ) {
-            console.log("Coffin clicked! Starting vampire animation...");
+            console.log("Coffin clicked! Opening it...");
 
-            // Keep the vampire in idle for 3 more seconds before starting to walk
-            setTimeout(() => {
-              switchAnimation(idleAction, walkAction);
+            // Play the coffin opening animation
+            if (animation01) {
+              animation01.repetitions = 1;
 
-              // Start moving the vampire forward and down during the Walk animation
-              moveVampireForwardAndDown();
-            }, 5000); // Wait for 3 seconds before switching to Walk
+              if (!isPlaying01) {
+                mixer01.timeScale = 1;
+                animation01.reset().play(); // Play the coffin opening animation
+                isPlaying01 = true;
+                animation01.clampWhenFinished = true;
+
+                // Vampire in idle animation (if not already playing)
+                if (vampireMixer) {
+                  idleAction.play(); // Play the idle animation
+                }
+
+                // Show a pop-up box after 2 seconds
+                setTimeout(() => {
+                  showStakePopup(); // Call the function to display the new popup
+                }, 2000); // Wait 2 seconds before showing the popup
+              }
+            }
           }
         }
       };
+      const handleYesButton = () => {
+        console.log("Yes button was clicked");
 
+        const popupBox = document.getElementById("popupBox");
+        if (popupBox) {
+          popupBox.remove();
+        }
+
+        const vampireChestPosition = {
+          x: vampire.position.x + 0.1, // Adjust to be slightly in front of vampire
+          y: vampire.position.y + 2.2, // Adjust slightly higher to hit the chest
+          z: vampire.position.z + 6.9, // Adjust z-axis to be slightly in front
+        };
+        gsap.to(stakeMesh.position, {
+          duration: 1,
+          x: vampireChestPosition.x,
+          y: vampireChestPosition.y,
+          z: vampireChestPosition.z,
+          ease: "power1.inOut",
+          onComplete: () => {
+            console.log("Stake placed into the vampire's chest.");
+            vampire.visible = false;
+
+            loadVampireHurtModel(); // Call to load the hurt vampire
+            vampire2.visible = true;
+          },
+        });
+        gsap.to(stakeMesh.rotation, {
+          duration: 1, // Adjust the duration as desired
+          x: Math.PI / 4, // Rotate 90 degrees on the X axis
+          y: Math.PI / 2, // Keep the Y axis the same or adjust as needed
+          z: Math.PI / 4, // Rotate 45 degrees on the Z axis (adjust as needed)
+          ease: "power2.inOut", // Easing function for smooth rotation
+          onComplete: () => {
+            console.log("Stake rotation completed.");
+          },
+        });
+      };
+
+      const loadVampireHurtModel = () => {
+        if (!vampire2) {
+          gltfLoader.load("vampire2.glb", (gltf) => {
+            vampire2 = gltf.scene;
+            vampire2.scale.set(100, 100, 100);
+            vampire2.position.set(4, -26.3, 2);
+            vampire2.rotation.set(0, Math.PI, 0);
+
+            vampire2.visible = true; // Ensure it's visible
+            scene.add(vampire2);
+            console.log("Vampire in hurt pose loaded and displayed.");
+          });
+        } else {
+          vampire2.visible = true;
+          vampire2.position.set(4, -26.3, 2);
+          console.log("Vampire in hurt pose displayed.");
+        }
+        // Remove the glow by resetting the emissive properties
+        stakeMesh.material.emissive = new THREE.Color(0x000000); // Set emissive to black
+        stakeMesh.material.emissiveIntensity = 0; // Set emissive intensity to 0 to remove glow
+        console.log("Glow removed from stake.");
+      };
       // Add event listener to trigger animation on click
       document.addEventListener("mousedown", onCoffinClick);
 
       // Add vampire to the scene
       scene.add(vampire);
+
+      // Event listener for the No button click inside the vampire loader
+      document.addEventListener("mousedown", (event) => {
+        const noButton = event.target.closest("button");
+        if (noButton && noButton.textContent === "No") {
+          handleNoButton();
+        }
+      });
+      document.addEventListener("mousedown", (event) => {
+        const yesButton = event.target.closest("button");
+        if (yesButton && yesButton.textContent === "Yes") {
+          handleYesButton();
+        }
+      });
     },
     undefined,
     (error) => {
@@ -349,10 +514,24 @@ const getModel = () => {
   });
 
   gltfLoader.load("stake.glb", (gltf) => {
-    stake = gltf.scene;
-    scene.add(gltf.scene);
-  });
+    stake = gltf.scene; // Assign the whole scene of the stake model
+    scene.add(gltf.scene); // Add the model to the scene
 
+    // Traverse the stake object to find the actual stake mesh
+    stake.traverse((child) => {
+      if (child.isMesh) {
+        stakeMesh = child; // Assign the actual mesh to stakeMesh
+
+        // Now initialize and set up drag controls after the stake mesh is ready
+        dragControls = new DragControls(
+          [stakeMesh],
+          camera,
+          renderer.domElement
+        );
+        setupDragControls(); // Call this function after initializing dragControls
+      }
+    });
+  });
   gltfLoader.load("fire.glb", (gltf) => {
     gltf.scene.traverse((child) => (child.material = fireMaterial));
     scene.add(gltf.scene);
@@ -372,19 +551,56 @@ const getModel = () => {
     scene.add(gltf.scene);
   });
 
+  const video2 = document.createElement("video");
+  video2.src = "./vortex.mp4"; // Path to your video file
+  video2.muted = true;
+  video2.loop = true;
+  video2.play();
+
+  const videoTexture2 = new THREE.VideoTexture(video2);
+
   gltfLoader.load("laptop.glb", (gltf) => {
-    gltf.scene.scale.set(0.05, 0.05, 0.05);
-    gltf.scene.position.y = 2.25;
-    gltf.scene.position.z = -4;
-    gltf.scene.position.x = 0.25;
-    scene.add(gltf.scene);
+    const laptop = gltf.scene;
+    laptop.scale.set(0.05, 0.05, 0.05);
+    laptop.position.set(0.25, 2.25, -4);
+
+    laptop.traverse((child) => {
+      if (child.isMesh && child.name === "Screen_ComputerScreen_0") {
+        // Apply the video texture to the laptop screen
+        child.material = new THREE.MeshBasicMaterial({ map: videoTexture2 });
+      }
+    });
+
+    scene.add(laptop);
   });
 
   gltfLoader.load("chair.glb", (gltf) => {
-    gltf.scene.scale.set(0.41, 0.41, 0.41);
-    gltf.scene.position.z = -1.5;
-    gltf.scene.position.x = -1;
-    scene.add(gltf.scene);
+    const chair = gltf.scene;
+    chair.scale.set(0.41, 0.41, 0.41);
+    chair.position.z = -1.5;
+    chair.position.x = 1;
+    chair.rotation.y = Math.PI / 4; // Rotate 45 degrees
+
+    // Traverse through the chair parts and change their material colors
+    chair.traverse((child) => {
+      if (child.isMesh) {
+        switch (child.name) {
+          case "Object_4": // Change the color of part 1
+            child.material.color.set(0xff0000); // Red color
+            break;
+          case "Object_5": // Change the color of part 2
+            child.material.color.set(0xff0000);
+            break;
+          case "Object_6": // Change the color of part 3
+            child.material.color.set(0x000000); // Blue color
+            break;
+          default:
+            break;
+        }
+      }
+    });
+
+    scene.add(chair);
   });
 
   gltfLoader.load("candle.glb", (gltf) => {
@@ -423,6 +639,395 @@ const getModel = () => {
     gltf.scene.traverse((child) => (child.material = videoMaterial));
     scene.add(gltf.scene);
   });
+};
+
+// Hovering function with smooth up-and-down animation
+const animateHover = (riseHeight, hoverHeight, hoverDuration) => {
+  gsap.to(stakeMesh.position, {
+    y: riseHeight + hoverHeight,
+    duration: hoverDuration,
+    // repeat: -1, // Infinite repeat for continuous hovering
+    // yoyo: true, // Smooth back-and-forth movement
+    ease: "none", // Constant ease for smooth animation
+  });
+};
+
+// Spin animation
+const animateSpin = () => {
+  gsap.to(stakeMesh.rotation, {
+    // rotate: 3, // 360 degrees in radians
+    duration: 3, // Duration for one full rotation
+    repeat: -1, // Infinite repeat
+    ease: "none", // Constant ease for smooth spinning
+  });
+};
+
+// Function to initialize drag controls for the stake
+const setupDragControls = () => {
+  dragControls.addEventListener("dragstart", (event) => {
+    console.log("Drag started on the stake");
+    isDragging = true;
+    controls.enabled = false; // Disable OrbitControls while dragging
+    gsap.killTweensOf(stakeMesh.position); // Stop hover animation
+    gsap.killTweensOf(stakeMesh.rotation); // Stop spin animation
+
+    // Ensure stakeMesh is valid before proceeding
+    if (stakeMesh && isStakeHovered && !isCoffinMarkerVisible) {
+      isCoffinMarkerVisible = true; // Prevent creating the marker multiple times
+      setTimeout(() => {
+        console.log("Displaying coffin marker");
+        createCoffinMarker(); // Create the coffin marker after the drag starts
+      }, 500); // Add a slight delay for effect
+    }
+  });
+
+  // Allow free movement in the X and Z directions but lock the Y axis
+  dragControls.addEventListener("drag", (event) => {
+    if (stakeMesh) {
+      stakeMesh.position.x = event.object.position.x;
+      stakeMesh.position.z = event.object.position.z;
+    } else {
+      console.warn("stakeMesh is undefined during drag event");
+    }
+  });
+
+  // Event listener for when the drag ends
+  dragControls.addEventListener("dragend", () => {
+    console.log("Drag ended on the stake");
+    isDragging = false;
+    controls.enabled = true; // Re-enable OrbitControls after dragging
+
+    // Restart hover and spin animations
+    animateSpin();
+  });
+};
+const createChestMarker = () => {
+  if (chestMarker) return;
+
+  // Create the main chest marker (black circle with 50% transparency)
+  const markerGeometry = new THREE.CircleGeometry(0.2, 16);
+  const markerMaterial = new THREE.MeshBasicMaterial({
+    color: 0x000000, // Black color
+    transparent: true,
+    opacity: 0.8,
+    side: THREE.DoubleSide, // Render both sides of the circle
+  });
+  chestMarker = new THREE.Mesh(markerGeometry, markerMaterial);
+  chestMarker.name = "chestMarker";
+  chestMarker.position.set(-1.3, -6, 2); // Adjust position as needed
+  scene.add(chestMarker);
+
+  // // Add a hitbox for easier click detection
+  // const hitboxGeometry = new THREE.SphereGeometry(0.75, 16, 16);
+  // const hitboxMaterial = new THREE.MeshBasicMaterial({
+  //   transparent: true,
+  //   opacity: 0, // Invisible hitbox
+  // });
+  // const hitbox = new THREE.Mesh(hitboxGeometry, hitboxMaterial);
+  // chestMarker.add(hitbox);
+
+  // Create a white border around the chest marker
+  const borderGeometry = new THREE.CircleGeometry(0.25, 16);
+  const borderMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff, // White border
+    side: THREE.DoubleSide,
+  });
+  const border = new THREE.Mesh(borderGeometry, borderMaterial);
+  border.position.set(0, 0, -0.01); // Slightly behind the marker
+  chestMarker.add(border);
+
+  // Create a canvas for the number
+  const markerCanvas = document.createElement("canvas");
+  const context = markerCanvas.getContext("2d");
+  markerCanvas.width = 128; // Increase resolution for better clarity
+  markerCanvas.height = 128;
+
+  // Style the number
+  context.font = "bold 60px Arial"; // Bigger font for clearer text
+  context.fillStyle = "#ffffff"; // White text
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText("1", markerCanvas.width / 2, markerCanvas.height / 2); // Center the number
+
+  // Create texture from the canvas and add it to a sprite
+  const texture = new THREE.CanvasTexture(markerCanvas);
+  const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
+  const numberSprite = new THREE.Sprite(spriteMaterial);
+
+  numberSprite.scale.set(0.5, 0.5, 1); // Adjust the scale to fit the marker
+  numberSprite.position.set(0, 0, 0.01); // Place the number on top of the marker
+  chestMarker.add(numberSprite);
+};
+// Function to handle clicking the chest marker
+const onChestMarkerClick = (event) => {
+  const coords = new THREE.Vector2(
+    (event.clientX / renderer.domElement.clientWidth) * 2 - 1,
+    -((event.clientY / renderer.domElement.clientHeight) * 2 - 1)
+  );
+
+  raycaster.setFromCamera(coords, camera);
+  const intersections = raycaster.intersectObjects(scene.children, true);
+
+  if (intersections.length > 0) {
+    let selectedObject = intersections.find(
+      (intersect) => intersect.object.name === "chestMarker"
+    );
+
+    if (selectedObject && chestMarker) {
+      console.log("Chest marker clicked!");
+
+      gsap.to(camera.position, {
+        duration: 2,
+        x: chestMarker.position.x + 0, // Check that chestMarker is not null before accessing position
+        y: chestMarker.position.y - 100,
+        z: chestMarker.position.z + 1,
+        onUpdate: () => {
+          if (chestMarker) {
+            camera.lookAt(chestMarker.position);
+            controls.update();
+          } else {
+            console.warn("chestMarker is no longer in the scene.");
+          }
+        },
+        onComplete: () => {
+          console.log("Camera zoomed in on the chest marker.");
+        },
+      });
+
+      // Remove the chest marker from the scene after it is clicked
+      scene.remove(chestMarker);
+      chestMarker = null;
+      showInstructionText("A locked chest? Open it to see what's inside."); // Show instruction text
+    } else {
+      console.log(
+        "No chest marker found in the intersections or marker already removed."
+      );
+    }
+  }
+};
+
+// Function to display a styled text box in the center of the screen
+const showInstructionText = (text) => {
+  let messageBox = document.getElementById("messageBox");
+
+  // Check if the messageBox already exists, if not create it
+  if (!messageBox) {
+    messageBox = document.createElement("div");
+    messageBox.id = "messageBox";
+    document.body.appendChild(messageBox);
+
+    // Apply styles to the messageBox
+    messageBox.style.position = "fixed";
+    messageBox.style.top = "50%";
+    messageBox.style.left = "50%";
+    messageBox.style.transform = "translate(-50%, -50%)";
+    messageBox.style.padding = "20px";
+    messageBox.style.backgroundColor = "rgba(0, 0, 0, 0.7)"; // Semi-transparent background
+    messageBox.style.color = "#fff"; // White text
+    messageBox.style.fontFamily = "Arial, sans-serif";
+    messageBox.style.fontSize = "18px";
+    messageBox.style.textAlign = "center";
+    messageBox.style.border = "2px solid white"; // White border
+    messageBox.style.borderRadius = "10px";
+    messageBox.style.maxWidth = "80%";
+    messageBox.style.zIndex = "1000"; // Make sure it's on top of other elements
+  }
+
+  // Set the text and show the message box
+  messageBox.innerHTML = text;
+
+  // Automatically hide the message box after 5 seconds
+  setTimeout(() => {
+    messageBox.remove();
+  }, 5000); // Adjust the timeout value as needed
+};
+
+const createCoffinMarker = () => {
+  if (coffinMarker) return;
+
+  const markerGeometry = new THREE.CircleGeometry(0.2, 16);
+  const markerMaterial = new THREE.MeshBasicMaterial({
+    color: 0x000000, // Black color
+    transparent: true,
+    opacity: 0.8,
+    side: THREE.DoubleSide, // Render both sides of the circle
+  });
+
+  // Create the coffin marker
+  coffinMarker = new THREE.Mesh(markerGeometry, markerMaterial);
+  coffinMarker.name = "coffinMarker";
+  coffinMarker.position.set(-1.5, -3, -4); // Position the marker near the coffin
+  scene.add(coffinMarker);
+
+  // Create a white border around the coffin marker
+  const borderGeometry = new THREE.CircleGeometry(0.25, 16); // Slightly larger for border effect
+  const borderMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff, // White border color
+    side: THREE.DoubleSide,
+  });
+
+  const border = new THREE.Mesh(borderGeometry, borderMaterial);
+  border.position.set(0, 0, 0); // Set on the same plane as the marker
+  coffinMarker.add(border);
+
+  // Add number or text inside the marker
+  const markerCanvas = document.createElement("canvas");
+  const context = markerCanvas.getContext("2d");
+  markerCanvas.width = 128;
+  markerCanvas.height = 128;
+  context.font = "bold 60px Arial";
+  context.fillStyle = "#ffffff"; // White text color
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText("2", markerCanvas.width / 2, markerCanvas.height / 2); // Number '2'
+
+  const texture = new THREE.CanvasTexture(markerCanvas);
+  const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
+  const numberSprite = new THREE.Sprite(spriteMaterial);
+  numberSprite.scale.set(0.5, 0.5, 1);
+  numberSprite.position.set(0, 0, 0); // Set on the same plane as the marker
+  coffinMarker.add(numberSprite);
+};
+
+const onCoffinMarkerClick = (event) => {
+  const coords = new THREE.Vector2(
+    (event.clientX / renderer.domElement.clientWidth) * 2 - 1,
+    -((event.clientY / renderer.domElement.clientHeight) * 2 - 1)
+  );
+
+  raycaster.setFromCamera(coords, camera);
+  const intersections = raycaster.intersectObjects(scene.children, true);
+
+  if (intersections.length > 0) {
+    const selectedObject = intersections[0].object;
+
+    if (selectedObject.name === "coffinMarker") {
+      console.log("Coffin marker clicked!");
+      const coffin = scene.getObjectByName("Plane001"); // Assuming 'Plane001' is the coffin's name
+
+      if (coffin) {
+        // Zoom the camera towards the coffin
+        gsap.to(camera.position, {
+          duration: 2,
+          x: coffin.position.x + 0, // Adjust the camera position relative to the coffin
+          y: coffin.position.y + 0,
+          // z: coffin.position.z + -2,
+          ease: "power2.inOut",
+          onUpdate: () => {
+            if (coffinMarker) {
+              // Ensure coffinMarker still exists
+              camera.lookAt(coffinMarker.position);
+              controls.update();
+            }
+          },
+          onComplete: () => {
+            console.log("Camera zoomed in on the coffin.");
+          },
+        });
+      } else {
+        console.error("Coffin (Plane001) not found in the scene!");
+      }
+
+      // Show the new message "Open the coffin, if you dare."
+      setTimeout(() => {
+        showInstructionText("Open the coffin, if you dare.");
+
+        // Set the flag to true, allowing the coffin to be opened
+        isCoffinClickable = true;
+        scene.remove(coffinMarker); // Remove the coffin marker from the scene
+        coffinMarker = null; // Set it to null to avoid future reference
+      }, 500); // Slight delay to match the camera zoom
+
+      // Move the stake closer to the coffin
+      if (stakeMesh) {
+        gsap.to(stakeMesh.position, {
+          x: coffinMarker?.position.x - 1,
+          y: coffinMarker?.position.y - 1,
+          z: coffinMarker?.position.z + 1,
+          duration: 2,
+          ease: "power1.out",
+          onComplete: () => {
+            console.log("Stake moved near the coffin.");
+          },
+        });
+      }
+    }
+  }
+};
+
+const showStakePopup = () => {
+  let popupBox = document.getElementById("popupBox");
+
+  // Check if the popupBox already exists, if not create it
+  if (!popupBox) {
+    popupBox = document.createElement("div");
+    popupBox.id = "popupBox";
+    document.body.appendChild(popupBox);
+
+    // Apply styles to the popupBox and initially hide it
+    popupBox.style.position = "fixed";
+    popupBox.style.top = "50%";
+    popupBox.style.left = "50%";
+    popupBox.style.transform = "translate(-50%, -50%)";
+    popupBox.style.padding = "20px";
+    popupBox.style.backgroundColor = "rgba(0, 0, 0, 0.7)"; // Semi-transparent background
+    popupBox.style.color = "#fff"; // White text
+    popupBox.style.fontFamily = "Arial, sans-serif";
+    popupBox.style.fontSize = "18px";
+    popupBox.style.textAlign = "center";
+    popupBox.style.border = "2px solid white"; // White border
+    popupBox.style.borderRadius = "10px";
+    popupBox.style.maxWidth = "80%";
+    popupBox.style.zIndex = "1000"; // Ensure it's on top of other elements
+    popupBox.style.visibility = "hidden"; // Initially hidden
+
+    // Add the message and buttons with a 3-second delay
+    setTimeout(() => {
+      // Make the popupBox visible after delay
+      popupBox.style.visibility = "visible";
+
+      const message = document.createElement("p");
+      message.textContent =
+        "Do you want to stake your tokens to slay the vampire?";
+      popupBox.appendChild(message);
+
+      // Add the "Yes" button
+      const yesButton = document.createElement("button");
+      yesButton.textContent = "Yes";
+      yesButton.style.margin = "10px";
+      yesButton.style.padding = "10px";
+      yesButton.style.backgroundColor = "#4CAF50";
+      yesButton.style.color = "#fff";
+      yesButton.style.border = "none";
+      yesButton.style.borderRadius = "5px";
+      yesButton.style.cursor = "pointer";
+
+      yesButton.onclick = () => {
+        console.log("User clicked Yes!");
+        handleYesButton(); // Handle the action when user clicks "Yes"
+        popupBox.remove(); // Remove the popup after clicking
+      };
+      popupBox.appendChild(yesButton);
+
+      // Add the "No" button
+      const noButton = document.createElement("button");
+      noButton.textContent = "No";
+      noButton.style.margin = "10px";
+      noButton.style.padding = "10px";
+      noButton.style.backgroundColor = "#f44336";
+      noButton.style.color = "#fff";
+      noButton.style.border = "none";
+      noButton.style.borderRadius = "5px";
+      noButton.style.cursor = "pointer";
+
+      noButton.onclick = () => {
+        console.log("User clicked No.");
+        handleNoButton();
+        popupBox.remove(); // Remove the popup after clicking
+      };
+      popupBox.appendChild(noButton);
+    }, 3000); // 3-second delay for the message and buttons
+  }
 };
 
 const firefliesMaterial = new THREE.ShaderMaterial({
@@ -482,87 +1087,58 @@ const onMouseDown = (event) => {
   if (intersections.length > 0) {
     const selectedObject = intersections[0].object;
 
-    if (
-      selectedObject.name == "Plane001" ||
-      selectedObject.name == "Plane001_1"
-    ) {
-      animation01.repetitions = 1;
-
-      if (!isPlaying01) {
-        mixer01.timeScale = 1;
-        animation01.reset().play();
-        isPlaying01 = true;
-        animation01.clampWhenFinished = true;
-      } else {
-        mixer01.timeScale = -1;
-        animation01.reset().play();
-        isPlaying01 = false;
-      }
-    }
-
     if (selectedObject.name === "StakeBAse") {
       console.log("StakeBAse was clicked!");
 
-      // Ensure the chest opens first
-      if (!isPlaying02) {
-        animation02.repetitions = 1; // Chest will open once
-        mixer02.timeScale = 1; // Normal playback
-        animation02.reset().play(); // Play the chest opening animation
-        animation02.clampWhenFinished = true; // Keep the chest open
-        isPlaying02 = true; // Prevent the chest from re-opening
-      }
+      if (!isStakeRisen) {
+        isStakeRisen = true; // Mark the stake as risen
 
-      // Traverse the stake object to find the actual stake mesh
-      let actualStakeMesh;
-      stake.traverse((child) => {
-        if (child.isMesh) {
-          actualStakeMesh = child; // Assuming the stake is a mesh
-          console.log("Actual Stake Mesh found:", actualStakeMesh);
+        // Ensure the chest opens first
+        if (!isPlaying02) {
+          animation02.repetitions = 1; // Chest will open once
+          mixer02.timeScale = 1; // Normal playback
+          animation02.reset().play(); // Play the chest opening animation
+          animation02.clampWhenFinished = true; // Keep the chest open
+          isPlaying02 = true; // Prevent the chest from re-opening
         }
-      });
 
-      if (actualStakeMesh) {
-        // Initial rise above the chest
-        const riseHeight = actualStakeMesh.position.y + 2.5; // Height above the chest
-        const hoverHeight = 0.1; // Gentle hover range (up and down movement)
-        const hoverDuration = 2; // Duration of the hover in seconds
+        // Remove the chest marker after the chest opens
+        if (chestMarker) {
+          scene.remove(chestMarker); // Remove the chest marker from the scene
+          console.log("Chest marker removed.");
+        }
 
-        // Glow Effect: Adding emissive glow to the material
-        actualStakeMesh.material.emissive = new THREE.Color(0xfdd017); // Red glow
-        actualStakeMesh.material.emissiveIntensity = 1.5; // Increase the glow intensity
+        // Apply the glow effect to the stake before it rises
+        stakeMesh.material.emissive = new THREE.Color(0xfdd017); // Yellow glow
+        stakeMesh.material.emissiveIntensity = 1.5; // Increase the glow intensity
 
         // Animate the stake rise up
-        gsap.to(actualStakeMesh.position, {
-          y: riseHeight,
+        gsap.to(stakeMesh.position, {
+          y: stakeMesh.position.y + 2.5, // Rise above the chest
           duration: 2,
-          ease: "power3.out",
+          ease: "power1.out",
           onComplete: () => {
-            // After rising, gently hover up and down
-            gsap.to(actualStakeMesh.position, {
-              y: riseHeight + hoverHeight,
-              duration: hoverDuration,
-              repeat: -1, // Infinite repeat
-              yoyo: true, // Back and forth
-              ease: "none", // Smooth up and down
-            });
-
-            // Rapidly spin the stake around its local Y-axis (vertical axis)
-            gsap.to(actualStakeMesh.rotation, {
-              rotation: 360, // 2π radians (360 degrees) for full rotation
-              duration: 0.5, // Faster spin duration (0.5 seconds per full rotation)
-              repeat: -1, // Infinite repeat
-              ease: "none", // No easing for constant rapid spin
-            });
+            isStakeHovered = true; // Mark the stake as hovering
+            animateHover(stakeMesh.position.y, 0.01, 2); // Hover animation
           },
         });
-      } else {
-        console.error("Actual Stake Mesh not found.");
+        // Show the instruction after a delay
+        setTimeout(() => {
+          showInstructionText(
+            "A wooden stake might come in handy. Better grab it!"
+          );
+        }, 2000);
+
+        // Initialize drag controls once the stake is hovering
+        setupDragControls();
       }
     }
 
+    // Check for CandleBase056 here inside the intersection block
     if (selectedObject.name == "CandleBase056") {
       scene.remove(selectedObject.parent);
     }
+
     console.log(`${selectedObject.name} was clicked!`);
   }
 };
@@ -589,16 +1165,10 @@ const animate = () => {
 window.addEventListener("resize", () => {
   sizes.width = window.innerWidth;
   sizes.height = window.innerHeight;
-
   camera.aspect = sizes.width / sizes.height;
   camera.updateProjectionMatrix();
-
   renderer.setSize(sizes.width, sizes.height);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 });
-
-// Mouse down listener for clicking objects
-document.addEventListener("mousedown", onMouseDown);
 
 const mouse = new THREE.Vector2();
 const intersectionPoint = new THREE.Vector3();
@@ -619,16 +1189,52 @@ window.addEventListener("mousemove", (e) => {
   raycaster.ray.intersectPlane(plane, intersectionPoint);
 });
 
-window.addEventListener("dblclick", () => {
-  const sphereGEO = candleISO.clone();
-  scene.add(sphereGEO);
-  const { x, y, z } = intersectionPoint;
-  sphereGEO.position.copy(new THREE.Vector3(x, 0.5, z));
+document.addEventListener("mousedown", onMouseDown);
+document.addEventListener("mousedown", onChestMarkerClick);
+document.addEventListener("mousedown", onCoffinMarkerClick);
 
-  //remove the candle after 2 seconds
-  // setTimeout(()=>{
-  //     sphereGEO.visible = false
-  // }, 2000)
+// Call the function to create the chest marker when initializing the scene
+createChestMarker();
+
+window.addEventListener("dblclick", () => {
+  if (!candleISO) {
+    console.error("candleISO is not loaded yet!");
+    return;
+  }
+
+  // Ignore clicks on the floor or specific objects like 'RoomFloor02'
+  if (
+    intersectionPoint &&
+    intersectionPoint.object &&
+    intersectionPoint.object.name === "RoomFloor02"
+  ) {
+    console.log("Ignoring clicks on the floor for candle placement.");
+    return;
+  }
+
+  // Clone the candleISO model
+  const clonedCandle = candleISO.clone();
+  scene.add(clonedCandle);
+
+  // Set its position using the intersection point of the raycaster
+  const { x, z } = intersectionPoint;
+  clonedCandle.position.set(x, 0.5, z); // Adjust height (y-axis) as needed, keep candles on the floor
+
+  // Debug the position of the candle
+  console.log("Candle added at position:", clonedCandle.position);
+
+  // Optional: Add a scale factor for better visibility (if needed)
+  clonedCandle.scale.set(1, 1, 1); // Adjust scale as needed
+
+  // Optional: Add a bounding box for debugging
+  const boundingBox = new THREE.BoxHelper(clonedCandle, 0xffff00); // Yellow bounding box for debugging
+  scene.add(boundingBox);
+
+  // Optional: Remove the candle after 2 seconds (uncomment if needed)
+  // setTimeout(() => {
+  //   clonedCandle.visible = false;
+  //   console.log("Candle removed");
+  // }, 2000);
 });
 
 getModel();
