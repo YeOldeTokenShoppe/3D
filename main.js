@@ -5,6 +5,9 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { OutlineEffect } from "three/addons/effects/OutlineEffect.js";
 import { gsap } from "gsap";
 import { DragControls } from "three/examples/jsm/controls/DragControls.js";
+import { Sky } from "three/examples/jsm/objects/Sky.js";
+import { MathUtils } from "three";
+import { Vector3 } from "three";
 
 const canvas = document.querySelector(".webgl");
 const scene = new THREE.Scene();
@@ -60,6 +63,7 @@ let animations,
   isCoffinMarkerVisible = false,
   dragControls = null,
   vampire2,
+  chart,
   chestMarker = null;
 
 const getCamera = () => {
@@ -87,6 +91,26 @@ const getControls = () => {
   controls.minAzimuthAngle = -Math.PI * 0.1;
   controls.maxAzimuthAngle = Math.PI * 0.5;
 };
+const sky = new Sky();
+sky.scale.setScalar(450000); // Sky dome size
+
+// Adjust the sun's position to simulate a night scene
+const phi = MathUtils.degToRad(180); // Sun below horizon (for night)
+const theta = MathUtils.degToRad(0); // Position for midnight (straight down)
+const sunPosition = new Vector3().setFromSphericalCoords(1, phi, theta);
+
+sky.material.uniforms.sunPosition.value = sunPosition;
+
+// Adjust the atmosphere for a dark night sky
+sky.material.uniforms.turbidity.value = 1; // Low turbidity for clear sky
+sky.material.uniforms.rayleigh.value = 0.05; // Low Rayleigh scattering for less atmospheric effect
+sky.material.uniforms.mieCoefficient.value = 0.0001; // Low Mie scattering for smoother sky
+sky.material.uniforms.mieDirectionalG.value = 0.3; // Atmospheric haze
+
+scene.add(sky);
+
+// Set the background color to a dark midnight blue
+renderer.setClearColor(new THREE.Color(0x0a0a23)); // Dark midnight blue
 
 const getLights = () => {
   // scene.add(new THREE.AmbientLight(0xffffff, .025))
@@ -243,6 +267,16 @@ const getModel = () => {
     scene.add(gltf.scene);
   });
 
+  gltfLoader.load("chart.glb", (gltf) => {
+    chart = gltf.scene;
+
+    chart.scale.set(0.7, 0.7, 0.7); // Final size
+    chart.position.set(0, 12, -10); // Coffin position
+    // chart.rotation.set(0, Math.PI, 0);
+
+    scene.add(chart);
+  });
+
   // Load vampire2 separately outside the vampire loader
   gltfLoader.load("vampire2.glb", (gltf) => {
     vampire2 = gltf.scene;
@@ -363,7 +397,7 @@ const getModel = () => {
         deathOverlay.style.display = "block";
         gsap.to(deathOverlay, {
           opacity: 1,
-          duration: 2, // 2-second fade-in
+          duration: 1,
           onComplete: () => {
             // After the fade-in, show the death message
             deathTextBox.style.display = "block";
@@ -849,7 +883,7 @@ const createCoffinMarker = () => {
   const markerMaterial = new THREE.MeshBasicMaterial({
     color: 0x000000, // Black color
     transparent: true,
-    opacity: 0.8,
+    opacity: 0.5,
     side: THREE.DoubleSide, // Render both sides of the circle
   });
 
@@ -884,8 +918,9 @@ const createCoffinMarker = () => {
   const texture = new THREE.CanvasTexture(markerCanvas);
   const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
   const numberSprite = new THREE.Sprite(spriteMaterial);
+
   numberSprite.scale.set(0.5, 0.5, 1);
-  numberSprite.position.set(0, 0, 0); // Set on the same plane as the marker
+  numberSprite.position.set(0, 0, 0.01); // Move the number slightly forward in Z-axis
   coffinMarker.add(numberSprite);
 };
 
@@ -930,7 +965,7 @@ const onCoffinMarkerClick = (event) => {
 
       // Show the new message "Open the coffin, if you dare."
       setTimeout(() => {
-        showInstructionText("Open the coffin, if you dare.");
+        showInstructionText("Do you dare open it?");
 
         // Set the flag to true, allowing the coffin to be opened
         isCoffinClickable = true;
@@ -941,7 +976,7 @@ const onCoffinMarkerClick = (event) => {
       // Move the stake closer to the coffin
       if (stakeMesh) {
         gsap.to(stakeMesh.position, {
-          x: coffinMarker?.position.x - 1,
+          x: coffinMarker?.position.x - 0,
           y: coffinMarker?.position.y - 1,
           z: coffinMarker?.position.z + 1,
           duration: 2,
